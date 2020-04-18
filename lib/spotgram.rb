@@ -52,16 +52,18 @@ module Spotgram
       threadpool = Threadpool.new(8)
       Telegram::Bot::Client.run(@api_key) do |bot|
         bot.listen do |message|
+          ctx = Context.new(bot, message)
+
           begin
             case message.text
             when '/start'
               puts "[Access Log] joined: username=#{message.from.username} first_name=#{message.from.first_name}"
-              txt = "Hello, #{message.from.first_name}. Send me any Spotify link and I'll convert it to mp3. You can even share it to this chat from the Spotify app directly"
+              txt = "Hello, #{message.from.first_name}. Send me any Spotify/Youtube link and I'll convert it to mp3. You can even share it directly from the apps"
               bot.api.send_message(chat_id: message.chat.id, text: txt)
             else
               threadpool.execute do
                 puts "[Access Log] received: username=#{message.from.username} text=#{message.text}"
-                handle_message(bot, message)
+                handle_message(ctx)
               end
             end
           rescue => e
@@ -73,57 +75,99 @@ module Spotgram
 
     private
 
-    def upgrade_youtube_dl
-      puts "Attempting to upgrade youtube-dl"
-      puts `youtube-dl -U`
+    Context = Struct.new(
+      :bot,
+      :message,
+      :last_msg,
+      :filename,
+      :youtube_link,
+      :spotify_link,
+      :artist,
+      :track,
+      :youtube_title,
+      :song_info_page,
+    )
+
+    def handle_message(ctx)
+      new_text_msg(ctx, "🔎 Let me find your song on youtube.\n\nTip: I also accept direct youtube links")
+
+      # "Handle query"
+      query_link = extract_spotify_link(ctx.message.text)
+      return set_progress_txt(ctx, "😔 Couldn't find link") if query_link.nil?
+
+      if query_link.match(/youtube.com/)
+        ctx.youtube_link = query_link
+      elsif query_link.match(/spotify/)
+        ctx.spotify_link = query_link
+        return set_progress_txt(ctx, "😔 Not supported yet. Share tracks instead of albums") if query_link.match(/album/)
+      else
+        return set_progress_txt(ctx, "😔 Link not supported")
+      end
+
+      fetch_youtube_link(ctx)
+      if ctx.youtube_link
+        download_youtube_metadata(ctx)
+
+        ctx.song_info_page = "\n\nVideo Link: #{ctx.youtube_link}"
+        ctx.song_info_page += "\nVideo Title: #{ctx.youtube_title}" if ctx.youtube_title
+        ctx.song_info_page += "\nSong Arist: #{ctx.artist}" if ctx.artist
+        ctx.song_info_page += "\nSong Title: #{ctx.track}" if ctx.track
+
+        set_progress_txt(ctx, "🏃‍♀️ Converting from youtube" + ctx.song_info_page)
+      else
+        new_text_msg(ctx, "😔 Couldnt find the youtube link. Try pasting a youtube link?")
+        return
+      end
+
+      download_youtube_audio(ctx)
+
+      if ctx.filename
+        set_progress_txt(ctx, "💈 Uploading file" + ctx.song_info_page)
+
+        send_audio(ctx, ctx.filename, title: ctx.track, performer: ctx.artist)
+        set_progress_txt(ctx, "📻 See you later" + ctx.song_info_page)
+      else
+        new_text_msg(ctx, "😔 Couldnt download that youtube link, sorry")
+      end
     end
 
-    def handle_message(bot, message)
-      first_msg = bot.api.send_message(chat_id: message.chat.id, text: "Let me find your song on youtube")
-      return unless first_msg['ok']
+    def download_youtube_metadata(ctx)
+      cmd = [
+        "youtube-dl",
+        "-j",
+        ctx.youtube_link,
+      ]
 
-      sp_link = extract_spotify_link(message.text)
-      unless sp_link
-        msg = if sp_link.match(/album/)
-          "Not supported yet. Share tracks instead of albums"
-        else
-          "Link not found or not supported"
-        end
+      stdout, stderr, status = Open3.capture3(*cmd)
+      if status.success?
+        yt_metadata = JSON.parse(stdout)
 
-        bot.api.edit_message_text(
-          chat_id: message.chat.id,
-          message_id: first_msg['result']['message_id'],
-          text: msg,
-          disable_web_page_preview: true
-        )
-        return
-      end
-
-      yt_link = spotify_to_yt_link(sp_link)
-      if yt_link
-        bot.api.edit_message_text(
-          chat_id: message.chat.id,
-          message_id: first_msg['result']['message_id'],
-          text: "Converting from youtube\n#{yt_link}",
-          disable_web_page_preview: true
-        )
+        ctx.artist = yt_metadata['artist'] if yt_metadata['artist']
+        ctx.track = yt_metadata['track'] if yt_metadata['track']
+        ctx.youtube_title = yt_metadata['title'] if yt_metadata['title']
       else
-        bot.api.send_message(chat_id: message.chat.id, text: "Couldnt convert Spotify to Youtube, sorry")
-        return
+        puts "error downloading metadata"
+        puts stdout, stderr
       end
 
-      filename = get_yt_mp3(yt_link)
-      if filename
-        bot.api.edit_message_text(
-          chat_id: message.chat.id,
-          message_id: first_msg['result']['message_id'],
-          text: "Uploading file"
-        )
+    end
 
-        bot.api.send_audio(chat_id: message.chat.id, audio: Faraday::UploadIO.new(filename, 'audio/mp3'))
-      else
-        bot.api.send_message(chat_id: message.chat.id, text: "Couldnt download that youtube link, sorry")
-      end
+    def new_text_msg(ctx, text)
+      msg = ctx.bot.api.send_message(chat_id: ctx.message.chat.id, text: text)
+      ctx.last_msg = msg if msg['ok']
+    end
+
+    def set_progress_txt(ctx, text)
+      ctx.bot.api.edit_message_text(
+        chat_id: ctx.message.chat.id,
+        message_id: ctx.last_msg['result']['message_id'],
+        text: text,
+        disable_web_page_preview: true
+      )
+    end
+
+    def send_audio(ctx, filename, **args)
+      ctx.bot.api.send_audio(**args, chat_id: ctx.message.chat.id, audio: Faraday::UploadIO.new(filename, 'audio/mp3'), )
     end
 
     def extract_spotify_link(msg)
@@ -131,7 +175,10 @@ module Spotgram
       return matches && matches[0].split(" ")[0]
     end
 
-    def spotify_to_yt_link(spotify_link)
+    def fetch_youtube_link(ctx)
+      return if ctx.youtube_link
+
+      spotify_link = ctx.spotify_link
       cmd = [
         "spotdl",
         "-d",
@@ -142,11 +189,11 @@ module Spotgram
       _, stderr, status = Open3.capture3(*cmd)
       if status.success?
         matches = stderr.match(/(http.*)\)/)
-        return matches && matches[1]
+        ctx.youtube_link = matches && matches[1]
       end
     end
 
-    def get_youtube_dl_filename(yt_link)
+    def get_youtube_dl_filename(youtube_link)
       stdout, stderr, status = Open3.capture3(
         "youtube-dl",
         "--get-filename",
@@ -154,7 +201,7 @@ module Spotgram
         "mp3",
         "-o",
         "./tmp/downloads/%(title)s.mp3",
-        yt_link
+        youtube_link
       )
 
       if status.success?
@@ -165,16 +212,27 @@ module Spotgram
       end
     end
 
-    def get_yt_mp3(yt_link)
-      output_filename = get_youtube_dl_filename(yt_link)
+    def progress_indicator(ctx, text)
+      random_emoji = ["😀","😁","😂","😃","😄","😅","😆","😇","😈","👿","😉",
+                    "😊","☺️","😋","😌","😍","😎","😏","😐","😑","😒","😓",
+                    "😔","😕","😖"].sample
+      set_progress_txt(ctx, "#{random_emoji} #{text}" + ctx.song_info_page)
+    rescue => e
+      puts "WARN: #{e}"
+    end
+
+    def download_youtube_audio(ctx)
+      youtube_link = ctx.youtube_link
+      output_filename = get_youtube_dl_filename(youtube_link)
       return unless output_filename
 
-      stdout, stderr, status = Open3.capture3(
+      stdin, stdouts, wait_thr = Open3.popen2e(
         "youtube-dl",
         "--extract-audio",
         "--continue",
         "--no-post-overwrites",
         "--no-overwrites",
+        "--no-playlist",
         "--ignore-errors",
         "--add-metadata",
         "--audio-format",
@@ -184,16 +242,34 @@ module Spotgram
         "--no-mtime",
         "-o",
         "./tmp/downloads/%(title)s.%(ext)s",
-        yt_link,
+        youtube_link,
       )
+      stdin.close
 
-      if status.success?
+      start_time = Time.now.to_i
+      while wait_thr.alive?
+        progress_indicator(ctx, "Downloading youtube audio..")
+        sleep 2
+
+        elapsed = Time.now.to_i
+        if elapsed > 5 * 60
+          Process.kill("KILL",wait_thr.pid)
+          new_text_msg(ctx, "😔 That took a long time. Gave up")
+        end
+      end
+
+      if wait_thr.value.success?
         puts "downloaded successfully"
-        return output_filename
+        ctx.filename = output_filename
       else
         puts "failed to download"
-        puts stdout, stderr
+        puts stdouts
       end
+    end
+
+    def upgrade_youtube_dl
+      puts "Attempting to upgrade youtube-dl"
+      puts `youtube-dl -U`
     end
   end
 end
