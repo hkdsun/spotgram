@@ -251,7 +251,7 @@ module Spotgram
         progress_indicator(ctx, "Downloading youtube audio..")
         sleep 2
 
-        elapsed = Time.now.to_i
+        elapsed = Time.now.to_i - start_time
         if elapsed > 5 * 60
           Process.kill("KILL",wait_thr.pid)
           new_text_msg(ctx, "😔 That took a long time. Gave up")
@@ -263,8 +263,10 @@ module Spotgram
         ctx.filename = output_filename
       else
         puts "failed to download"
-        puts stdouts
+        puts stdouts.read
       end
+    ensure
+      stdouts.close
     end
 
     def upgrade_youtube_dl
