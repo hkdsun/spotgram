@@ -1,8 +1,26 @@
 require "spotgram/version"
 require "telegram/bot"
 require 'open3'
+require 'concurrent-ruby'
 
 module Spotgram
+  class Threadpool
+    def initialize(num_workers)
+      @semaphore ||= Concurrent::Semaphore.new(num_workers)
+    end
+
+    def execute
+      @semaphore.acquire
+      Thread.new do
+        begin
+          yield
+        ensure
+          @semaphore.release
+        end
+      end
+    end
+  end
+
   class Bot
     LINKS_RE = /(^(http|https):\/\/[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,5}(([0-9]{1,5})?\/.*)?$)/ix
     STORAGE = "#{ENV['HOME']}/.spotgram"
@@ -31,6 +49,7 @@ module Spotgram
         end
       end
 
+      threadpool = Threadpool.new(8)
       Telegram::Bot::Client.run(@api_key) do |bot|
         bot.listen do |message|
           begin
@@ -40,8 +59,10 @@ module Spotgram
               txt = "Hello, #{message.from.first_name}. Send me any Spotify link and I'll convert it to mp3. You can even share it to this chat from the Spotify app directly"
               bot.api.send_message(chat_id: message.chat.id, text: txt)
             else
-              puts "[Access Log] received: username=#{message.from.username} text=#{message.text}"
-              handle_message(bot, message)
+              threadpool.execute do
+                puts "[Access Log] received: username=#{message.from.username} text=#{message.text}"
+                handle_message(bot, message)
+              end
             end
           rescue => e
             puts "Rescued exception while handling message=#{message}: #{e}"
@@ -63,10 +84,16 @@ module Spotgram
 
       sp_link = extract_spotify_link(message.text)
       unless sp_link
+        msg = if sp_link.match(/album/)
+          "Not supported yet. Share tracks instead of albums"
+        else
+          "Link not found or not supported"
+        end
+
         bot.api.edit_message_text(
           chat_id: message.chat.id,
           message_id: first_msg['result']['message_id'],
-          text: "Couldn't find a Spotify link there. You sure?",
+          text: msg,
           disable_web_page_preview: true
         )
         return
@@ -77,7 +104,7 @@ module Spotgram
         bot.api.edit_message_text(
           chat_id: message.chat.id,
           message_id: first_msg['result']['message_id'],
-          text: "Found this on youtube.. let me convert it..\n#{yt_link}",
+          text: "Converting from youtube\n#{yt_link}",
           disable_web_page_preview: true
         )
       else
@@ -90,7 +117,7 @@ module Spotgram
         bot.api.edit_message_text(
           chat_id: message.chat.id,
           message_id: first_msg['result']['message_id'],
-          text: "I have the file ready. Uploading it on my slowass internet now"
+          text: "Uploading file"
         )
 
         bot.api.send_audio(chat_id: message.chat.id, audio: Faraday::UploadIO.new(filename, 'audio/mp3'))
