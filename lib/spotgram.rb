@@ -24,6 +24,7 @@ module Spotgram
   class Bot
     LINKS_RE = /(^(http|https):\/\/[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,5}(([0-9]{1,5})?\/.*)?$)/ix
     STORAGE = "#{ENV['HOME']}/.spotgram"
+    ARCHIVE_CHAT_ID = '***REMOVED***'
 
     def initialize(api_key)
       @api_key = api_key
@@ -42,7 +43,7 @@ module Spotgram
         loop do
           time_since_update = Time.now.to_i - last_update
           if time_since_update > one_hour
-            upgrade_youtube_dl
+            upgrade_ytdl
             last_update = Time.now.to_i
           end
           sleep 5
@@ -58,7 +59,7 @@ module Spotgram
             case message.text
             when '/start'
               puts "[Access Log] joined: username=#{message.from.username} first_name=#{message.from.first_name}"
-              txt = "Hello, #{message.from.first_name}. Send me any Spotify/Youtube link and I'll convert it to mp3. You can even share it directly from the apps"
+              txt = "Hello, #{message.from.first_name}. Send me any Spotify/Youtube/SoundCloud link and I'll convert it to mp3. You can even share it directly from the apps"
               bot.api.send_message(chat_id: message.chat.id, text: txt)
             else
               threadpool.execute do
@@ -80,46 +81,48 @@ module Spotgram
       :message,
       :last_msg,
       :filename,
-      :youtube_link,
+      :ytdl_link,
       :spotify_link,
       :artist,
       :track,
-      :youtube_title,
+      :link_title,
       :song_info_page,
     )
 
     def handle_message(ctx)
-      new_text_msg(ctx, "🔎 Let me find your song on youtube.\n\nTip: I also accept direct youtube links")
+      new_text_msg(ctx, "🔎 Searching for song...\n\nTip: I accept spotify/youtube/soundcloud links")
 
-      # "Handle query"
-      query_link = extract_spotify_link(ctx.message.text)
-      return set_progress_txt(ctx, "😔 Couldn't find link") if query_link.nil?
+      query_link = extract_query_link(ctx.message.text)
+      return set_progress_txt(ctx, "😔 Couldn't find any link there") if query_link.nil?
 
-      if query_link.match(/youtube.com/)
-        ctx.youtube_link = query_link
-      elsif query_link.match(/spotify/)
+      if query_link.match(/spotify/)
         ctx.spotify_link = query_link
         return set_progress_txt(ctx, "😔 Not supported yet. Share tracks instead of albums") if query_link.match(/album/)
+
+        ctx.ytdl_link = spotify_to_ytdl(ctx)
+        return new_text_msg(ctx, "😔 Couldnt find the youtube link. Try pasting a youtube link?") unless ctx.ytdl_link
       else
-        return set_progress_txt(ctx, "😔 Link not supported")
+        ctx.ytdl_link = query_link
       end
 
-      fetch_youtube_link(ctx)
-      if ctx.youtube_link
-        download_youtube_metadata(ctx)
+      handle_ytdl_track(ctx)
+    end
 
-        ctx.song_info_page = "\n\nVideo Link: #{ctx.youtube_link}"
-        ctx.song_info_page += "\nVideo Title: #{ctx.youtube_title}" if ctx.youtube_title
-        ctx.song_info_page += "\nSong Arist: #{ctx.artist}" if ctx.artist
-        ctx.song_info_page += "\nSong Title: #{ctx.track}" if ctx.track
+    def handle_ytdl_track(ctx)
+      download_metadata(ctx)
 
-        set_progress_txt(ctx, "🏃‍♀️ Converting from youtube" + ctx.song_info_page)
-      else
-        new_text_msg(ctx, "😔 Couldnt find the youtube link. Try pasting a youtube link?")
-        return
-      end
+      ctx.song_info_page = "\n\nOriginal Link: #{ctx.ytdl_link}"
+      ctx.song_info_page += "\nOriginal Title: #{ctx.link_title}" if ctx.link_title
+      ctx.song_info_page += "\nSong Arist: #{ctx.artist}" if ctx.artist
+      ctx.song_info_page += "\nSong Title: #{ctx.track}" if ctx.track
 
-      download_youtube_audio(ctx)
+      set_progress_txt(ctx, "🏃‍♀️ Converting to audio file" + ctx.song_info_page)
+
+      handle_generic_ytdl(ctx)
+    end
+
+    def handle_generic_ytdl(ctx)
+      download_ytdl_audio(ctx)
 
       if ctx.filename
         set_progress_txt(ctx, "💈 Uploading file" + ctx.song_info_page)
@@ -127,24 +130,36 @@ module Spotgram
         send_audio(ctx, ctx.filename, title: ctx.track, performer: ctx.artist)
         set_progress_txt(ctx, "📻 See you later" + ctx.song_info_page)
       else
-        new_text_msg(ctx, "😔 Couldnt download that youtube link, sorry")
+        new_text_msg(ctx, "😔 Couldnt download that link, sorry")
       end
     end
 
-    def download_youtube_metadata(ctx)
+    def download_metadata(ctx)
       cmd = [
         "youtube-dl",
         "-j",
-        ctx.youtube_link,
+        ctx.ytdl_link,
       ]
 
       stdout, stderr, status = Open3.capture3(*cmd)
       if status.success?
-        yt_metadata = JSON.parse(stdout)
+        begin
+          yt_metadata = JSON.parse(stdout)
+        rescue
+          puts "couldn't parse metadata for #{ctx.ytdl_link}"
+          return
+        end
 
-        ctx.artist = yt_metadata['artist'] if yt_metadata['artist']
-        ctx.track = yt_metadata['track'] if yt_metadata['track']
-        ctx.youtube_title = yt_metadata['title'] if yt_metadata['title']
+        case yt_metadata['extractor']
+        when "youtube"
+          ctx.artist = yt_metadata['artist']
+          ctx.track = yt_metadata['track']
+          ctx.link_title = yt_metadata['title']
+        when "soundcloud"
+          ctx.artist = yt_metadata['uploader']
+          ctx.track = yt_metadata['title']
+          ctx.link_title = yt_metadata['fulltitle']
+        end
       else
         puts "error downloading metadata"
         puts stdout, stderr
@@ -167,16 +182,29 @@ module Spotgram
     end
 
     def send_audio(ctx, filename, **args)
-      ctx.bot.api.send_audio(**args, chat_id: ctx.message.chat.id, audio: Faraday::UploadIO.new(filename, 'audio/mp3'), )
+      begin
+        msg = ctx.bot.api.send_audio(**args, chat_id: ctx.message.chat.id, audio: Faraday::UploadIO.new(filename, 'audio/mp3'))
+        unless msg['ok'] && msg['result']['audio']['file_id']
+          puts "Couldnt forward to archives chat msg=#{msg}"
+          return
+        end
+        ctx.bot.api.send_audio(**args, chat_id: ARCHIVE_CHAT_ID,
+          audio: msg['result']['audio']['file_id'],
+          caption: "From #{ctx.message.from.first_name} (@#{ctx.message.from.username})"
+        )
+      rescue Telegram::Bot::Exceptions::ResponseError
+        set_progress_txt(ctx, "Couldn't upload that file.")
+        raise
+      end
     end
 
-    def extract_spotify_link(msg)
+    def extract_query_link(msg)
       matches = msg.match(LINKS_RE)
       return matches && matches[0].split(" ")[0]
     end
 
-    def fetch_youtube_link(ctx)
-      return if ctx.youtube_link
+    def spotify_to_ytdl(ctx)
+      return if ctx.ytdl_link
 
       spotify_link = ctx.spotify_link
       cmd = [
@@ -189,11 +217,11 @@ module Spotgram
       _, stderr, status = Open3.capture3(*cmd)
       if status.success?
         matches = stderr.match(/(http.*)\)/)
-        ctx.youtube_link = matches && matches[1]
+        return matches && matches[1]
       end
     end
 
-    def get_youtube_dl_filename(youtube_link)
+    def get_ytdl_filename(ytdl_link)
       stdout, stderr, status = Open3.capture3(
         "youtube-dl",
         "--get-filename",
@@ -201,7 +229,7 @@ module Spotgram
         "mp3",
         "-o",
         "./tmp/downloads/%(title)s.mp3",
-        youtube_link
+        ytdl_link
       )
 
       if status.success?
@@ -221,9 +249,9 @@ module Spotgram
       puts "WARN: #{e}"
     end
 
-    def download_youtube_audio(ctx)
-      youtube_link = ctx.youtube_link
-      output_filename = get_youtube_dl_filename(youtube_link)
+    def download_ytdl_audio(ctx)
+      ytdl_link = ctx.ytdl_link
+      output_filename = get_ytdl_filename(ytdl_link)
       return unless output_filename
 
       stdin, stdouts, wait_thr = Open3.popen2e(
@@ -242,13 +270,13 @@ module Spotgram
         "--no-mtime",
         "-o",
         "./tmp/downloads/%(title)s.%(ext)s",
-        youtube_link,
+        ytdl_link,
       )
       stdin.close
 
       start_time = Time.now.to_i
       while wait_thr.alive?
-        progress_indicator(ctx, "Downloading youtube audio..")
+        progress_indicator(ctx, "Downloading audio file..")
         sleep 2
 
         elapsed = Time.now.to_i - start_time
@@ -266,10 +294,10 @@ module Spotgram
         puts stdouts.read
       end
     ensure
-      stdouts.close
+      stdouts&.close
     end
 
-    def upgrade_youtube_dl
+    def upgrade_ytdl
       puts "Attempting to upgrade youtube-dl"
       puts `youtube-dl -U`
     end
