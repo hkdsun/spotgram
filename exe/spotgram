@@ -5,4 +5,6 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 require "spotgram"
 
-Spotgram::Bot.new("***REMOVED***").run
+mirror_chat = ENV.fetch("SPOTGRAM_MIRROR_TO_CHAT", nil)
+api_key = ENV.fetch("SPOTGRAM_API_KEY")
+Spotgram::Bot.new(api_key, mirror_to_chat_id: mirror_chat).run

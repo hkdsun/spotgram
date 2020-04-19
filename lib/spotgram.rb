@@ -24,10 +24,10 @@ module Spotgram
   class Bot
     LINKS_RE = /(^(http|https):\/\/[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,5}(([0-9]{1,5})?\/.*)?$)/ix
     STORAGE = "#{ENV['HOME']}/.spotgram"
-    ARCHIVE_CHAT_ID = '***REMOVED***'
 
-    def initialize(api_key)
+    def initialize(api_key, mirror_to_chat_id: nil)
       @api_key = api_key
+      @mirror_to_chat_id = mirror_to_chat_id
 
       unless File.directory?(STORAGE)
         Dir.mkdir(STORAGE)
@@ -188,10 +188,13 @@ module Spotgram
           puts "Couldnt forward to archives chat msg=#{msg}"
           return
         end
-        ctx.bot.api.send_audio(**args, chat_id: ARCHIVE_CHAT_ID,
-          audio: msg['result']['audio']['file_id'],
-          caption: "From #{ctx.message.from.first_name} (@#{ctx.message.from.username})"
-        )
+
+        if @mirror_to_chat_id
+          ctx.bot.api.send_audio(**args, chat_id: @mirror_to_chat_id,
+            audio: msg['result']['audio']['file_id'],
+            caption: "From #{ctx.message.from.first_name} (@#{ctx.message.from.username})"
+          )
+        end
       rescue Telegram::Bot::Exceptions::ResponseError
         set_progress_txt(ctx, "Couldn't upload that file.")
         raise
