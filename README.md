@@ -1,33 +1,13 @@
 # Spotgram
 
+Telegram bot to convert music links to telegram audio files:
+
 ![](./assets/screenshot.png)
 
-## Installation
-
-Add this line to your application's Gemfile:
-
-```ruby
-gem 'spotgram'
-```
-
-And then execute:
-
-    $ bundle
-
-Or install it yourself as:
-
-    $ gem install spotgram
+* Links are converted using [`youtube-dl`](https://github.com/ytdl-org/youtube-dl/), so all links supported by ytdl are supported here.
+* The bot handles Spotify links. It uses [`spotdl`](https://github.com/ritiek/spotify-downloader) to retrieve the equivalent youtube video, which is then handled by youtube-dl as per usual.
+* Instagram links are handled as video files rather than music.
 
 ## Usage
 
-TODO: Write usage instructions here
-
-## Development
-
-After checking out the repo, run `bin/setup` to install dependencies. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
-
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and tags, and push the `.gem` file to [rubygems.org](https://rubygems.org).
-
-## Contributing
-
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/spotgram.
+Quick start: check out the Dockerfile and systemd template in this repo.
