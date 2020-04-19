@@ -61,6 +61,9 @@ module Spotgram
               puts "[Access Log] joined: username=#{message.from.username} first_name=#{message.from.first_name}"
               txt = "Hello, #{message.from.first_name}. Send me any Spotify/Youtube/SoundCloud link and I'll convert it to mp3. You can even share it directly from the apps"
               bot.api.send_message(chat_id: message.chat.id, text: txt)
+              if @mirror_to_chat_id
+                bot.api.send_message(chat_id: @mirror_to_chat_id, text: "New user: @#{message.from.username}")
+              end
             else
               threadpool.execute do
                 puts "[Access Log] received: username=#{message.from.username} text=#{message.text}"
@@ -95,7 +98,9 @@ module Spotgram
       query_link = extract_query_link(ctx.message.text)
       return set_progress_txt(ctx, "😔 Couldn't find any link there") if query_link.nil?
 
-      if query_link.match(/spotify/)
+      if query_link.match(/instagram/)
+        return handle_video(ctx, query_link)
+      elsif query_link.match(/spotify/)
         ctx.spotify_link = query_link
         return set_progress_txt(ctx, "😔 Not supported yet. Share tracks instead of albums") if query_link.match(/album/)
 
@@ -201,6 +206,26 @@ module Spotgram
       end
     end
 
+    def send_video_file(ctx, filename, **args)
+      begin
+        msg = ctx.bot.api.send_video(**args, chat_id: ctx.message.chat.id, video: Faraday::UploadIO.new(filename, 'video/mp4'))
+        unless msg['ok'] && msg['result']['video']['file_id']
+          puts "Couldnt forward to archives chat msg=#{msg}"
+          return
+        end
+
+        if @mirror_to_chat_id
+          ctx.bot.api.send_video(**args, chat_id: @mirror_to_chat_id,
+            video: msg['result']['video']['file_id'],
+            caption: "From #{ctx.message.from.first_name} (@#{ctx.message.from.username})"
+          )
+        end
+      rescue Telegram::Bot::Exceptions::ResponseError
+        set_progress_txt(ctx, "Couldn't upload that file.")
+        raise
+      end
+    end
+
     def extract_query_link(msg)
       matches = msg.match(LINKS_RE)
       return matches && matches[0].split(" ")[0]
@@ -224,14 +249,12 @@ module Spotgram
       end
     end
 
-    def get_ytdl_filename(ytdl_link)
+    def get_ytdl_filename(ytdl_link, format: "mp3")
       stdout, stderr, status = Open3.capture3(
         "youtube-dl",
         "--get-filename",
-        "--audio-format",
-        "mp3",
         "-o",
-        "./tmp/downloads/%(title)s.mp3",
+        "./tmp/downloads/%(title)s.#{format == :auto ? "%(ext)s": format}",
         ytdl_link
       )
 
@@ -294,6 +317,52 @@ module Spotgram
         ctx.filename = output_filename
       else
         puts "failed to download"
+        puts stdouts.read
+      end
+    ensure
+      stdouts&.close
+    end
+
+    def handle_video(ctx, link)
+      ctx.song_info_page = "\n\nOriginal Video: #{link}"
+      set_progress_txt(ctx, "🏃‍♀️ Downloading video.." + ctx.song_info_page)
+
+      output_filename = get_ytdl_filename(link, format: :auto)
+      return unless output_filename
+
+      stdin, stdouts, wait_thr = Open3.popen2e(
+        "youtube-dl",
+        "--continue",
+        "--no-post-overwrites",
+        "--no-overwrites",
+        "--no-playlist",
+        "--ignore-errors",
+        "--no-mtime",
+        "-o",
+        "./tmp/downloads/%(title)s.%(ext)s",
+        link,
+      )
+      stdin.close
+
+      start_time = Time.now.to_i
+      while wait_thr.alive?
+        progress_indicator(ctx, "Downloading video file..")
+        sleep 2
+
+        elapsed = Time.now.to_i - start_time
+        if elapsed > 5 * 60
+          Process.kill("KILL",wait_thr.pid)
+          new_text_msg(ctx, "😔 That took a long time. Gave up")
+        end
+      end
+
+      if wait_thr.value.success?
+        puts "downloaded #{link} successfully"
+        set_progress_txt(ctx, "💈 Uploading file" + ctx.song_info_page)
+        send_video_file(ctx, output_filename)
+        set_progress_txt(ctx, "📻 See you later" + ctx.song_info_page)
+      else
+        puts "failed to download #{link}"
         puts stdouts.read
       end
     ensure
