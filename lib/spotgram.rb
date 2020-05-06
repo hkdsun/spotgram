@@ -107,8 +107,6 @@ module Spotgram
         if @mirror_to_chat_id
           bot.api.send_message(chat_id: @mirror_to_chat_id, text: "New user: @#{message.from.username}")
         end
-      else
-        ctx.bot.api.send_message(chat_id: ctx.message.chat.id, text: "Unauthorized")
       end
     end
 
