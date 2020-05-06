@@ -7,4 +7,6 @@ require "spotgram"
 
 mirror_chat = ENV.fetch("SPOTGRAM_MIRROR_TO_CHAT", nil)
 api_key = ENV.fetch("SPOTGRAM_API_KEY")
-Spotgram::Bot.new(api_key, mirror_to_chat_id: mirror_chat).run
+admin_id = Integer(ENV.fetch("SPOTGRAM_ADMIN_ID"))
+
+Spotgram::Bot.new(api_key, admin_id, mirror_to_chat_id: mirror_chat).run

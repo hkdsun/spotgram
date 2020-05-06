@@ -13,6 +13,7 @@ ExecStart=/usr/bin/docker run \
   --name=spotgram \
   --env SPOTGRAM_API_KEY=<YOUR_BOT_TOKEN> \
   --env SPOTGRAM_MIRROR_TO_CHAT=<CHAT_ID_TO_MIRROR> \
+  --env SPOTGRAM_ADMIN_ID=<ADMIN_ID> \
   hkdsun/images:spotgram
 ExecStop=/usr/bin/docker stop spotgram
 

@@ -25,8 +25,9 @@ module Spotgram
     LINKS_RE = /(^(http|https):\/\/[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,5}(([0-9]{1,5})?\/.*)?$)/ix
     STORAGE = "#{ENV['HOME']}/.spotgram"
 
-    def initialize(api_key, mirror_to_chat_id: nil)
+    def initialize(api_key, admin_user_id, mirror_to_chat_id: nil)
       @api_key = api_key
+      @admin_user_id = admin_user_id
       @mirror_to_chat_id = mirror_to_chat_id
 
       unless File.directory?(STORAGE)
@@ -58,15 +59,15 @@ module Spotgram
           begin
             case message.text
             when '/start'
-              puts "[Access Log] joined: username=#{message.from.username} first_name=#{message.from.first_name}"
-              txt = "Hello, #{message.from.first_name}. Send me any Spotify/Youtube/SoundCloud link and I'll convert it to mp3. You can even share it directly from the apps"
-              bot.api.send_message(chat_id: message.chat.id, text: txt)
-              if @mirror_to_chat_id
-                bot.api.send_message(chat_id: @mirror_to_chat_id, text: "New user: @#{message.from.username}")
-              end
+              puts "[Access Log] joined: id=#{message.from.id} username=#{message.from.username} first_name=#{message.from.first_name}"
+              handle_start(ctx)
             else
               threadpool.execute do
                 puts "[Access Log] received: username=#{message.from.username} text=#{message.text}"
+                unless check_auth(ctx)
+                  puts "[Auth Log] unauthorized: id=#{message.from.id} username=#{message.from.username} first_name=#{message.from.first_name}"
+                  next
+                end
                 handle_message(ctx)
               end
             end
@@ -91,6 +92,25 @@ module Spotgram
       :link_title,
       :song_info_page,
     )
+
+    def check_auth(ctx)
+      return true if ctx.message.from.id == @admin_user_id
+
+      ctx.bot.api.send_message(chat_id: ctx.message.chat.id, text: "🛑 unauthorized access 🛑")
+      return false
+    end
+
+    def handle_start(ctx)
+      if check_auth(ctx)
+        txt = "Hello, #{message.from.first_name}. Send me any Spotify/Youtube/SoundCloud link and I'll convert it to mp3. You can even share it directly from the apps"
+        bot.api.send_message(chat_id: message.chat.id, text: txt)
+        if @mirror_to_chat_id
+          bot.api.send_message(chat_id: @mirror_to_chat_id, text: "New user: @#{message.from.username}")
+        end
+      else
+        ctx.bot.api.send_message(chat_id: ctx.message.chat.id, text: "Unauthorized")
+      end
+    end
 
     def handle_message(ctx)
       new_text_msg(ctx, "🔎 Searching for song...\n\nTip: I accept spotify/youtube/soundcloud links")
@@ -370,8 +390,8 @@ module Spotgram
     end
 
     def upgrade_ytdl
-      puts "Attempting to upgrade youtube-dl"
-      puts `youtube-dl -U`
+      res = `youtube-dl -U`
+      puts res unless res.match?(/up-to-date/)
     end
   end
 end
