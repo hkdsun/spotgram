@@ -102,10 +102,10 @@ module Spotgram
 
     def handle_start(ctx)
       if check_auth(ctx)
-        txt = "Hello, #{message.from.first_name}. Send me any Spotify/Youtube/SoundCloud link and I'll convert it to mp3. You can even share it directly from the apps"
-        bot.api.send_message(chat_id: message.chat.id, text: txt)
+        txt = "Hello, #{ctx.message.from.first_name}. Send me any Spotify/Youtube/SoundCloud link and I'll convert it to mp3. You can even share it directly from the apps"
+        ctx.bot.api.send_message(chat_id: ctx.message.chat.id, text: txt)
         if @mirror_to_chat_id
-          bot.api.send_message(chat_id: @mirror_to_chat_id, text: "New user: @#{message.from.username}")
+          ctx.bot.api.send_message(chat_id: @mirror_to_chat_id, text: "New user: @#{ctx.message.from.username}")
         end
       end
     end
