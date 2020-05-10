@@ -6,7 +6,8 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 require "spotgram"
 
 mirror_chat = ENV.fetch("SPOTGRAM_MIRROR_TO_CHAT", nil)
-api_key = ENV.fetch("SPOTGRAM_API_KEY")
 admin_id = Integer(ENV.fetch("SPOTGRAM_ADMIN_ID"))
+api_key = ENV.fetch("SPOTEAGLE_API_KEY")
+storage_root = ENV.fetch("SPOTEAGLE_TAPES", "./tmp/tapes/")
 
-Spotgram::YtdlBot.new(api_key, admin_id, mirror_to_chat_id: mirror_chat).run
+Spotgram::MirrorBot.new(api_key, admin_id, storage_root, log_chat: mirror_chat).run

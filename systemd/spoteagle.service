@@ -1,0 +1,25 @@
+# /etc/systemd/system/spotgram.service
+[Unit]
+Description=Spoteagle Container
+Requires=docker.service
+After=docker.service
+
+[Service]
+Restart=always
+RestartSec=30
+
+ExecStart=/usr/bin/docker run \
+  --rm \
+  --name=spotgram \
+  --env SPOTEAGLE_API_KEY=<YOUR_BOT_TOKEN> \
+  --env SPOTGRAM_MIRROR_TO_CHAT=<CHAT_ID_TO_MIRROR> \
+  --env SPOTGRAM_ADMIN_ID=<ADMIN_ID> \
+  --env SPOTEAGLE_TAPES=<ADMIN_ID> \
+  --mount type=bind,source="/path/to/tapes",target=/tapes \
+  --user spotuser
+  hkdsun/images:spotgram \
+  ruby /app/exe/spoteagle
+ExecStop=/usr/bin/docker stop spotgram
+
+[Install]
+WantedBy=multi-user.target

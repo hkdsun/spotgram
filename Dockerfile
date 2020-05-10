@@ -21,7 +21,11 @@ COPY . /app
 # Add a script to be executed every time the container starts.
 COPY entrypoint.sh /usr/bin/
 RUN chmod +x /usr/bin/entrypoint.sh
-ENTRYPOINT ["entrypoint.sh"]
+
+RUN addgroup --gid 1024 spotgroup
+RUN adduser --disabled-password --gecos "" --force-badname --ingroup spotgroup spotuser
+
+USER spotuser
 
 # Start the main process.
 CMD ["ruby", "/app/exe/spotgram"]
