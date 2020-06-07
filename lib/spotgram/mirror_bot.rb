@@ -3,9 +3,8 @@ require 'fileutils'
 
 module Spotgram
   class MirrorBot
-    def initialize(api_key, admin_user_id, storage_root, log_chat: nil)
+    def initialize(api_key, storage_root, log_chat: nil)
       @api_key = api_key
-      @admin_user_id = admin_user_id
       @log_chat = log_chat
       @storage_root = storage_root
 
