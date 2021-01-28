@@ -1,0 +1,10 @@
+#!/usr/bin/env ruby
+
+lib = File.expand_path("../../lib", __FILE__)
+$LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
+
+require "spotgram"
+
+api_key = ENV.fetch("TORSEARCH_API_KEY")
+
+Spotgram::JackettBot.new(api_key).run

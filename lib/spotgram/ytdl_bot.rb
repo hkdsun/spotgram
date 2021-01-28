@@ -37,13 +37,14 @@ module Spotgram
           begin
             case message.text
             when '/start'
-              puts "[Access Log] joined: id=#{message.from.id} username=#{message.from.username} first_name=#{message.from.first_name}"
+              puts "[Access Log] joined: id=#{message.from&.id} username=#{message.from&.username} first_name=#{message.from&.first_name}"
               handle_start(ctx)
             else
               threadpool.execute do
-                puts "[Access Log] received: username=#{message.from.username} text=#{message.text}"
+                next if message.text.match?(/hunting new audio/)
+                puts "[Access Log] received: username=#{message.from&.username} text=#{message.text}"
                 unless check_auth(ctx)
-                  puts "[Auth Log] unauthorized: id=#{message.from.id} username=#{message.from.username} first_name=#{message.from.first_name}"
+                  puts "[Auth Log] unauthorized: id=#{message.from&.id} username=#{message.from&.username} first_name=#{message.from&.first_name}"
                   next
                 end
                 handle_message(ctx)
@@ -72,7 +73,7 @@ module Spotgram
     )
 
     def check_auth(ctx)
-      return true if ctx.message.from.id == @admin_user_id
+      return true if ctx.message.from&.id == @admin_user_id
 
       ctx.bot.api.send_message(chat_id: ctx.message.chat.id, text: "🛑 unauthorized access 🛑")
       return false
@@ -80,10 +81,10 @@ module Spotgram
 
     def handle_start(ctx)
       if check_auth(ctx)
-        txt = "Hello, #{ctx.message.from.first_name}. Send me any Spotify/Youtube/SoundCloud link and I'll convert it to mp3. You can even share it directly from the apps"
+        txt = "Hello, #{ctx.message.from&.first_name}. Send me any Spotify/Youtube/SoundCloud link and I'll convert it to mp3. You can even share it directly from the apps"
         ctx.bot.api.send_message(chat_id: ctx.message.chat.id, text: txt)
         if @mirror_to_chat_id
-          ctx.bot.api.send_message(chat_id: @mirror_to_chat_id, text: "New user: @#{ctx.message.from.username}")
+          ctx.bot.api.send_message(chat_id: @mirror_to_chat_id, text: "New user: @#{ctx.message.from&.username}")
         end
       end
     end
