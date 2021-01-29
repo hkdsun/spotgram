@@ -4,7 +4,7 @@ require 'json'
 module JackettAPI
   extend self
 
-  BASE_URL = ENV['JACKETT_BASE_URL'] ? ENV['JACKETT_BASE_URL'] : "http://localhost:9117"
+  BASE_URL = "http://#{ENV.fetch("JACKETT_HOST", "localhost")}:9117"
   API_URL = "#{BASE_URL}/api/v2.0"
 
 
@@ -13,7 +13,8 @@ module JackettAPI
     uri = URI.parse("#{API_URL}/indexers/all/results")
 
     params = {
-      apikey: "mph009qgje8zup18p644ywur8365ptlm",
+      # TODO: remove api key
+      apikey: ENV.fetch("JACKETT_API_KEY"),
       Query: query,
       Tracker: "iptorrents"
     }

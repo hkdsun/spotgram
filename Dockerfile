@@ -1,4 +1,4 @@
-FROM ruby:2.5
+FROM ruby:2.7
 
 # install mp3 converter and python
 RUN apt-get update -qq && apt-get install -y ffmpeg python3 python3-pip
